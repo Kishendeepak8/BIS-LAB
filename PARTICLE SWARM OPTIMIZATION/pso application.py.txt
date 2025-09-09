@@ -1,0 +1,164 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+### ============ First PSO: 2D function minimization ==============
+
+def f(x,y):
+    return (x-3.14)**2 + (y-2.72)**2 + np.sin(3*x+1.41) + np.sin(4*y-1.73)
+
+# Grid for contour plot
+x_vals = np.linspace(0,5,100)
+y_vals = np.linspace(0,5,100)
+X_grid, Y_grid = np.meshgrid(x_vals, y_vals)
+Z = f(X_grid, Y_grid)
+
+# Global minimum for reference
+x_min = X_grid.ravel()[Z.argmin()]
+y_min = Y_grid.ravel()[Z.argmin()]
+
+# PSO parameters for first problem
+n_particles1 = 20
+w1, c11, c21 = 0.8, 0.1, 0.1
+np.random.seed(100)
+X1 = np.random.rand(2, n_particles1) * 5
+V1 = np.random.randn(2, n_particles1) * 0.1
+
+pbest1 = X1.copy()
+pbest_obj1 = f(X1[0], X1[1])
+gbest1 = pbest1[:, pbest_obj1.argmin()]
+gbest_obj1 = pbest_obj1.min()
+
+def update_first_pso():
+    global V1, X1, pbest1, pbest_obj1, gbest1, gbest_obj1
+    r1, r2 = np.random.rand(2)
+    V1 = w1 * V1 + c11*r1*(pbest1 - X1) + c21*r2*(gbest1.reshape(-1,1) - X1)
+    X1 = X1 + V1
+    obj = f(X1[0], X1[1])
+    mask = obj < pbest_obj1
+    pbest1[:, mask] = X1[:, mask]
+    pbest_obj1 = np.minimum(pbest_obj1, obj)
+    gbest1 = pbest1[:, pbest_obj1.argmin()]
+    gbest_obj1 = pbest_obj1.min()
+
+### ============ Second PSO: Network routing problem ==============
+
+delay = np.array([
+    [0, 2, 3, 0],
+    [0, 0, 0, 2],
+    [0, 0, 0, 1],
+    [0, 0, 0, 0],
+])
+
+def fitness_network(position):
+    p0to1, p0to2 = position
+    p0to1 = max(0, min(1, p0to1))
+    p0to2 = max(0, min(1, p0to2))
+    total = p0to1 + p0to2
+    if total == 0:
+        p0to1, p0to2 = 0.5, 0.5
+    else:
+        p0to1 /= total
+        p0to2 /= total
+    return p0to1*(delay[0,1] + delay[1,3]) + p0to2*(delay[0,2] + delay[2,3])
+
+# PSO parameters for second problem
+n_particles2 = 30
+w2, c12, c22 = 0.7, 1.4, 1.4
+np.random.seed(42)
+X2 = np.random.rand(n_particles2, 2)
+V2 = np.random.randn(n_particles2, 2)*0.1
+
+pbest2 = X2.copy()
+pbest_fitness2 = np.array([fitness_network(x) for x in X2])
+gbest_idx2 = pbest_fitness2.argmin()
+gbest2 = pbest2[gbest_idx2].copy()
+gbest_fitness2 = pbest_fitness2[gbest_idx2]
+
+def update_second_pso():
+    global X2, V2, pbest2, pbest_fitness2, gbest2, gbest_fitness2
+    for i in range(n_particles2):
+        r1, r2 = np.random.rand(2)
+        V2[i] = (w2*V2[i]
+                 + c12*r1*(pbest2[i] - X2[i])
+                 + c22*r2*(gbest2 - X2[i]))
+        X2[i] += V2[i]
+        X2[i] = np.clip(X2[i], 0, 1)
+        fit = fitness_network(X2[i])
+        if fit < pbest_fitness2[i]:
+            pbest2[i] = X2[i].copy()
+            pbest_fitness2[i] = fit
+    min_idx = pbest_fitness2.argmin()
+    if pbest_fitness2[min_idx] < gbest_fitness2:
+        gbest2 = pbest2[min_idx].copy()
+        gbest_fitness2 = pbest_fitness2[min_idx]
+
+### =========== Prepare fitness landscape for network routing problem ==========
+
+grid_points = 100
+p_vals = np.linspace(0, 1, grid_points)
+q_vals = np.linspace(0, 1, grid_points)
+P, Q = np.meshgrid(p_vals, q_vals)
+Z2 = np.zeros_like(P)
+for i in range(grid_points):
+    for j in range(grid_points):
+        Z2[i, j] = fitness_network([P[i,j], Q[i,j]])
+
+### =========== Setup figure with two subplots ================
+
+fig, (ax1, ax2) = plt.subplots(1,2, figsize=(14,6))
+
+# Left subplot: 2D function PSO
+img1 = ax1.imshow(Z, extent=[0,5,0,5], origin='lower', cmap='viridis', alpha=0.5)
+ax1.contour(X_grid, Y_grid, Z, 10, colors='black', alpha=0.3)
+ax1.plot([x_min], [y_min], marker='x', color='white', label='Global Minimum')
+pbest_plot1 = ax1.scatter(pbest1[0], pbest1[1], color='black', alpha=0.5, label='Personal Best')
+particles_plot1 = ax1.scatter(X1[0], X1[1], color='blue', alpha=0.5, label='Particles')
+velocities_plot1 = ax1.quiver(X1[0], X1[1], V1[0], V1[1], color='blue', width=0.005, scale=1, alpha=0.7)
+gbest_plot1 = ax1.scatter([gbest1[0]], [gbest1[1]], marker='*', s=150, color='red', alpha=0.7, label='Global Best')
+ax1.set_xlim([0,5])
+ax1.set_ylim([0,5])
+ax1.set_title('PSO: 2D Function Optimization')
+ax1.legend()
+
+# Right subplot: Network routing PSO
+contour2 = ax2.contourf(P, Q, Z2, levels=50, cmap='viridis')
+cbar2 = fig.colorbar(contour2, ax=ax2)
+cbar2.set_label('Expected Delay (ms)')
+pbest_plot2 = ax2.scatter(pbest2[:,0], pbest2[:,1], color='black', alpha=0.5, label='Personal Best')
+particles_plot2 = ax2.scatter(X2[:,0], X2[:,1], color='blue', alpha=0.7, label='Particles')
+velocities_plot2 = ax2.quiver(X2[:,0], X2[:,1], V2[:,0], V2[:,1], color='blue', alpha=0.7)
+gbest_plot2 = ax2.scatter([gbest2[0]], [gbest2[1]], color='red', s=150, marker='*', label='Global Best')
+ax2.set_xlabel('p0to1')
+ax2.set_ylabel('p0to2')
+ax2.set_title('PSO: Network Routing Optimization')
+ax2.legend()
+
+### =============== Animation update function ===================
+
+def animate(frame):
+    update_first_pso()
+    update_second_pso()
+    
+    # Update first plot
+    pbest_plot1.set_offsets(pbest1.T)
+    particles_plot1.set_offsets(X1.T)
+    velocities_plot1.set_offsets(X1.T)
+    velocities_plot1.set_UVC(V1[0], V1[1])
+    gbest_plot1.set_offsets(gbest1.reshape(1,-1))
+    ax1.set_title(f'PSO: 2D Function Optimization\nIteration {frame+1:02d} Best={gbest_obj1:.3f}')
+    
+    # Update second plot
+    pbest_plot2.set_offsets(pbest2)
+    particles_plot2.set_offsets(X2)
+    velocities_plot2.set_offsets(X2)
+    velocities_plot2.set_UVC(V2[:,0], V2[:,1])
+    gbest_plot2.set_offsets(gbest2.reshape(1,-1))
+    ax2.set_title(f'PSO: Network Routing Optimization\nIteration {frame+1:02d} Best Delay={gbest_fitness2:.4f} ms')
+    
+    return (pbest_plot1, particles_plot1, velocities_plot1, gbest_plot1,
+            pbest_plot2, particles_plot2, velocities_plot2, gbest_plot2)
+
+anim = FuncAnimation(fig, animate, frames=50, interval=300, blit=False, repeat=False)
+plt.tight_layout()
+plt.show()
