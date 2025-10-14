@@ -1,0 +1,207 @@
+!pip install opencv-python-headless pillow
+
+import urllib.request
+from PIL import Image
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+import os
+
+# Download image if it doesn't exist
+image_path = 'lena.png'
+# Alternative URL for Lena image
+url = 'https://github.com/opencv/opencv/raw/4.x/samples/data/lena.jpg' # Using a raw file from GitHub
+
+try:
+    # Check if the file exists locally first
+    if not os.path.exists(image_path):
+        print(f"Downloading {image_path} from {url}...")
+        urllib.request.urlretrieve(url, image_path)
+        print("Download complete.")
+    else:
+        print(f"{image_path} already exists.")
+
+except Exception as e:
+    print(f"Error during image download: {e}")
+    # Exit or handle the error appropriately if download fails
+
+# Load image using PIL
+try:
+    # Use PIL to open the image, which can sometimes be more robust
+    pil_img = Image.open(image_path).convert('L')  # 'L' mode is grayscale
+    img = np.array(pil_img)
+    print(f"Image loaded successfully. Shape: {img.shape}, dtype: {img.dtype}")
+
+except FileNotFoundError:
+     print(f"Error: Image file not found at {image_path}. Download may have failed.")
+     # Exit or handle the error if file is not found after download attempt
+     exit()
+except Exception as e:
+    print(f"Error loading image with PIL: {e}")
+    # Exit or handle other loading errors
+    exit()
+
+
+# Grey Wolf Optimizer class (same as before)
+class GreyWolfOptimizer:
+    def __init__(self, obj_func, lb, ub, dim, num_wolves=5, max_iter=30):
+        self.obj_func = obj_func
+        self.lb = lb
+        self.ub = ub
+        self.dim = dim
+        self.num_wolves = num_wolves
+        self.max_iter = max_iter
+
+    def optimize(self):
+        positions = np.random.uniform(self.lb, self.ub, (self.num_wolves, self.dim))
+
+        alpha_pos = np.zeros(self.dim)
+        alpha_score = -np.inf
+
+        beta_pos = np.zeros(self.dim)
+        beta_score = -np.inf
+
+        delta_pos = np.zeros(self.dim)
+        delta_score = -np.inf
+
+        # Store best scores per iteration for convergence plot
+        convergence_history = []
+
+
+        for t in range(self.max_iter):
+            # Evaluate fitness for all wolves in the current iteration
+            fitness_scores = np.array([self.obj_func(pos) for pos in positions])
+
+            # Update alpha, beta, and delta
+            # Find indices of top 3 wolves based on fitness (assuming maximization)
+            sorted_indices = np.argsort(fitness_scores)[::-1] # Sort in descending order for maximization
+
+            # Ensure we have at least 3 wolves before accessing indices 1 and 2
+            if self.num_wolves > 0 and fitness_scores[sorted_indices[0]] > alpha_score:
+                 alpha_score = fitness_scores[sorted_indices[0]]
+                 alpha_pos = positions[sorted_indices[0]].copy()
+
+            if self.num_wolves > 1 and fitness_scores[sorted_indices[1]] > beta_score:
+                 beta_score = fitness_scores[sorted_indices[1]]
+                 beta_pos = positions[sorted_indices[1]].copy()
+
+            if self.num_wolves > 2 and fitness_scores[sorted_indices[2]] > delta_score:
+                 delta_score = fitness_scores[sorted_indices[2]]
+                 delta_pos = positions[sorted_indices[2]].copy()
+
+
+            # Update convergence history with the current best score
+            convergence_history.append(alpha_score)
+
+
+            a = 2 - t * (2 / self.max_iter)
+
+            for i in range(self.num_wolves):
+                # Calculate A and C vectors for each wolf
+                r1_alpha, r2_alpha = np.random.rand(), np.random.rand()
+                A1 = 2 * a * r1_alpha - a
+                C1 = 2 * r2_alpha
+
+                r1_beta, r2_beta = np.random.rand(), np.random.rand()
+                A2 = 2 * a * r1_beta - a
+                C2 = 2 * r2_beta
+
+                r1_delta, r2_delta = np.random.rand(), np.random.rand()
+                A3 = 2 * a * r1_delta - a
+                C3 = 2 * r2_delta
+
+                # Calculate the distances D
+                D_alpha = abs(C1 * alpha_pos - positions[i])
+                D_beta = abs(C2 * beta_pos - positions[i])
+                D_delta = abs(C3 * delta_pos - positions[i])
+
+                # Update the position of the current wolf
+                # Ensure alpha_pos, beta_pos, delta_pos are numpy arrays for element-wise operations
+                X1 = alpha_pos - A1 * D_alpha
+                X2 = beta_pos - A2 * D_beta
+                X3 = delta_pos - A3 * D_delta
+
+
+                positions[i] = (X1 + X2 + X3) / 3
+
+                # Apply bounds
+                positions[i] = np.clip(positions[i], self.lb, self.ub)
+
+
+        return alpha_pos, alpha_score, convergence_history
+
+# Objective function: Otsu's between-class variance for a given threshold
+def otsu_fitness(threshold_array):
+    # Ensure the input is treated as a single threshold value
+    threshold = int(threshold_array[0])
+    # Check if threshold is within valid range for pixel values
+    if threshold < 0 or threshold > 255:
+        return -np.inf # Penalize invalid thresholds
+
+    # Create masks for background and foreground based on the threshold
+    background_mask = img <= threshold
+    foreground_mask = img > threshold
+
+    # Get the pixel values for background and foreground
+    background_pixels = img[background_mask]
+    foreground_pixels = img[foreground_mask]
+
+    # Calculate weights (probabilities)
+    total_pixels = img.size
+    w0 = len(background_pixels) / total_pixels
+    w1 = len(foreground_pixels) / total_pixels
+
+    # Avoid division by zero or issues with empty classes
+    if w0 == 0 or w1 == 0:
+        return -np.inf # Cannot calculate variance with empty classes
+
+    # Calculate means
+    mu0 = np.mean(background_pixels) if len(background_pixels) > 0 else 0
+    mu1 = np.mean(foreground_pixels) if len(foreground_pixels) > 0 else 0
+
+    # Calculate between-class variance
+    between_var = w0 * w1 * (mu0 - mu1) ** 2
+
+    return between_var
+
+
+# Run Grey Wolf Optimization to find best threshold
+# The search space for the threshold is 0 to 255
+# Increased wolves and iterations for potentially better results
+gwo = GreyWolfOptimizer(otsu_fitness, lb=0, ub=255, dim=1, num_wolves=30, max_iter=100)
+best_threshold_array, best_score, history = gwo.optimize()
+best_threshold = int(best_threshold_array[0])
+
+print(f"\nOptimal Threshold found by GWO: {best_threshold}")
+print(f"Corresponding Otsu's Variance: {best_score:.2f}")
+
+
+# Apply threshold to segment image using the found threshold
+_, segmented = cv2.threshold(img, best_threshold, 255, cv2.THRESH_BINARY)
+
+# Plot results
+plt.figure(figsize=(14, 6))
+
+# Original Image
+plt.subplot(1, 3, 1)
+plt.title('Original Grayscale Image')
+plt.axis('off')
+plt.imshow(img, cmap='gray')
+
+# Segmented Image
+plt.subplot(1, 3, 2)
+plt.title(f'Segmented Image (Threshold={best_threshold})')
+plt.axis('off')
+plt.imshow(segmented, cmap='gray')
+
+# Convergence Plot
+plt.subplot(1, 3, 3)
+plt.plot(history, color='purple', linewidth=2)
+plt.title('GWO Convergence (Otsu Variance)')
+plt.xlabel('Iteration')
+plt.ylabel('Otsu Variance')
+plt.grid(True)
+
+
+plt.tight_layout()
+plt.show()
